@@ -2,6 +2,8 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
+const fs = require('fs');
+const multer = require('multer');
 const wppconnect = require('@wppconnect-team/wppconnect');
 
 // 1. Configuração do Servidor e Nuvem
@@ -13,9 +15,64 @@ const io = new Server(server, {
   }
 });
 
-// Servir arquivos estáticos do frontend
+// Criar diretório de uploads se não existir
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+// Configuração do Multer para salvamento de mídias (fotos e vídeos)
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadsDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const ext = path.extname(file.originalname);
+    cb(null, 'media-' + uniqueSuffix + ext);
+  }
+});
+
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: 100 * 1024 * 1024 } // limite de 100MB por arquivo
+});
+
+// Servir arquivos estáticos do frontend e pasta de uploads
 app.use(express.static(path.join(__dirname, 'public')));
+app.use('/uploads', express.static(uploadsDir));
 app.use(express.json());
+
+// Endpoints da API REST para Upload de Mídias
+app.post('/api/upload', upload.array('mediaFiles', 5), (req, res) => {
+  try {
+    const files = (req.files || []).map(file => ({
+      filename: file.filename,
+      originalname: file.originalname,
+      mimetype: file.mimetype,
+      path: file.path,
+      size: file.size
+    }));
+    console.log(`[Upload] ${files.length} arquivo(s) de mídia recebidos com sucesso.`);
+    res.json({ success: true, files });
+  } catch (err) {
+    console.error('[Upload] Erro ao fazer upload de mídias:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.delete('/api/upload/:filename', (req, res) => {
+  try {
+    const filePath = path.join(uploadsDir, req.params.filename);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+      console.log(`[Upload] Arquivo removido: ${req.params.filename}`);
+    }
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 // Porta configurada dinamicamente para o ambiente de nuvem (Render, Heroku, Railway, etc.)
 const PORT = process.env.PORT || 3000;
@@ -165,9 +222,9 @@ async function extractAndFilterContacts() {
 }
 
 /**
- * Lógica de Disparo em Lote com Intervalo Fixo de Segurança (Anti-Banimento)
+ * Lógica de Disparo em Lote com Suporte a Texto, Foto e Vídeo e Intervalo Fixo de Segurança (Anti-Banimento)
  */
-async function startBulkDispatch(messageText) {
+async function startBulkDispatch(messageText, mediaFiles = []) {
   if (!wppClient) {
     io.emit('dispatch_error', { message: 'WhatsApp não está conectado.' });
     return;
@@ -183,8 +240,11 @@ async function startBulkDispatch(messageText) {
     return;
   }
 
-  if (!messageText || messageText.trim() === '') {
-    io.emit('dispatch_error', { message: 'O texto da mensagem é obrigatório.' });
+  const hasMedia = Array.isArray(mediaFiles) && mediaFiles.length > 0;
+  const hasText = messageText && messageText.trim() !== '';
+
+  if (!hasMedia && !hasText) {
+    io.emit('dispatch_error', { message: 'Digite uma mensagem de texto ou anexe fotos/vídeos para iniciar o envio.' });
     return;
   }
 
@@ -192,7 +252,7 @@ async function startBulkDispatch(messageText) {
   stopDispatchRequested = false;
   const total = validContacts.length;
 
-  console.log(`[Disparo] Iniciando envio para ${total} contatos com intervalo fixo de 12s.`);
+  console.log(`[Disparo] Iniciando envio para ${total} contatos. Mídias: ${hasMedia ? mediaFiles.length : 0}. Intervalo: 12s.`);
   io.emit('dispatch_started', { total });
 
   for (let i = 0; i < total; i++) {
@@ -219,8 +279,26 @@ async function startBulkDispatch(messageText) {
     });
 
     try {
-      // Envio da mensagem via WPPConnect
-      await wppClient.sendText(contact.id, messageText);
+      if (hasMedia) {
+        // Envio de Mídia(s) (Foto e/ou Vídeo)
+        for (let m = 0; m < mediaFiles.length; m++) {
+          const media = mediaFiles[m];
+          // Apenas a primeira mídia leva o texto como legenda (caption)
+          const caption = (m === 0 && hasText) ? messageText : '';
+          const absPath = path.resolve(media.path);
+
+          console.log(`[Disparo] Enviando mídia (${m + 1}/${mediaFiles.length}) "${media.originalname}" para ${contact.name}...`);
+          
+          await wppClient.sendFile(contact.id, absPath, media.originalname, caption);
+
+          if (m < mediaFiles.length - 1) {
+            await sleep(2000); // 2 segundos de pausa entre mídias para o mesmo contato
+          }
+        }
+      } else {
+        // Envio apenas de texto
+        await wppClient.sendText(contact.id, messageText);
+      }
       console.log(`[Disparo] (${currentNumber}/${total}) Enviado com sucesso.`);
     } catch (err) {
       console.error(`[Disparo] Erro ao enviar para ${contact.id}:`, err.message);
@@ -243,6 +321,20 @@ async function startBulkDispatch(messageText) {
     io.emit('dispatch_completed', { total });
     io.emit('status', { code: 'COMPLETED', message: `Envio concluído! Total: ${total} contatos processados.` });
   }
+
+  // Limpar arquivos temporários após o disparo
+  if (hasMedia) {
+    mediaFiles.forEach(media => {
+      try {
+        if (fs.existsSync(media.path)) {
+          fs.unlinkSync(media.path);
+        }
+      } catch (e) {
+        console.warn(`[Cleanup] Não foi possível apagar ${media.path}:`, e.message);
+      }
+    });
+  }
+
   stopDispatchRequested = false;
 }
 
@@ -418,8 +510,8 @@ io.on('connection', (socket) => {
 
   // Evento: Solicitação de Disparo
   socket.on('start_dispatch', (data) => {
-    const { message } = data || {};
-    startBulkDispatch(message);
+    const { message, mediaFiles } = data || {};
+    startBulkDispatch(message, mediaFiles);
   });
 
   // Evento: Cancelar Disparo

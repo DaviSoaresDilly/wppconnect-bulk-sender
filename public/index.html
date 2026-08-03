@@ -320,6 +320,108 @@
     .hidden {
       display: none !important;
     }
+
+    /* Área de Upload e Preview de Mídia */
+    .media-dropzone {
+      border: 2px dashed #CBD5E1;
+      border-radius: 12px;
+      padding: 16px;
+      text-align: center;
+      background: #F8FAFC;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .media-dropzone:hover {
+      border-color: var(--accent);
+      background: #EEF2FF;
+    }
+
+    .media-preview-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .media-card {
+      position: relative;
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.03);
+    }
+
+    .media-thumbnail {
+      width: 100%;
+      height: 90px;
+      object-fit: cover;
+      background: #000;
+    }
+
+    .media-video-placeholder {
+      width: 100%;
+      height: 90px;
+      background: #1E293B;
+      color: white;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      gap: 4px;
+    }
+
+    .media-card-info {
+      padding: 6px 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .media-card-name {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--text-main);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .media-card-size {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+    }
+
+    .media-remove-btn {
+      position: absolute;
+      top: 4px;
+      right: 4px;
+      background: rgba(239, 68, 68, 0.9);
+      color: white;
+      border: none;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      font-size: 12px;
+      font-weight: bold;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.2s ease;
+    }
+
+    .media-remove-btn:hover {
+      background: var(--danger);
+    }
   </style>
 </head>
 <body>
@@ -424,6 +526,26 @@
           <textarea id="messageText" placeholder="Digite aqui a mensagem que deseja enviar para os seus contatos..."></textarea>
         </div>
 
+        <!-- Seção de Anexo de Foto / Vídeo -->
+        <div class="form-group">
+          <label>Anexar Foto e/ou Vídeo (Opcional):</label>
+          <div class="media-dropzone" id="mediaDropzone" onclick="document.getElementById('mediaFileInput').click()">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#4F46E5" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+              <circle cx="8.5" cy="8.5" r="1.5"/>
+              <polyline points="21 15 16 10 5 21"/>
+            </svg>
+            <div>
+              <strong style="font-size: 0.875rem; color: var(--text-main);">Clique ou arraste Fotos e Vídeos aqui</strong>
+              <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px;">Fotos (.jpg, .png, .webp) ou Vídeos (.mp4, .mov, .avi)</p>
+            </div>
+          </div>
+          <input type="file" id="mediaFileInput" accept="image/*,video/*" multiple style="display: none;" onchange="handleMediaFilesSelected(event)">
+          
+          <!-- Lista / Preview das Mídias Anexadas -->
+          <div id="mediaPreviewGrid" class="media-preview-grid"></div>
+        </div>
+
         <div class="anti-ban-note">
           🔒 <strong>Proteção Anti-Banimento Ativa:</strong> O sistema realiza o envio com um intervalo fixo e rigoroso de 12 segundos por mensagem.
         </div>
@@ -480,7 +602,93 @@
     const progressPercent = document.getElementById('progressPercent');
     const progressBarFill = document.getElementById('progressBarFill');
 
+    const mediaFileInput = document.getElementById('mediaFileInput');
+    const mediaPreviewGrid = document.getElementById('mediaPreviewGrid');
+    const mediaDropzone = document.getElementById('mediaDropzone');
+
     let totalContactsLoaded = 0;
+    let selectedMediaFiles = [];
+
+    // Suporte Drag & Drop no Media Dropzone
+    if (mediaDropzone) {
+      ['dragenter', 'dragover'].forEach(eventName => {
+        mediaDropzone.addEventListener(eventName, (e) => {
+          e.preventDefault();
+          mediaDropzone.style.borderColor = '#4F46E5';
+          mediaDropzone.style.background = '#EEF2FF';
+        }, false);
+      });
+
+      ['dragleave', 'drop'].forEach(eventName => {
+        mediaDropzone.addEventListener(eventName, (e) => {
+          e.preventDefault();
+          mediaDropzone.style.borderColor = '#CBD5E1';
+          mediaDropzone.style.background = '#F8FAFC';
+        }, false);
+      });
+
+      mediaDropzone.addEventListener('drop', (e) => {
+        const dt = e.dataTransfer;
+        const files = dt.files;
+        addMediaFiles(Array.from(files));
+      });
+    }
+
+    // Manipulação de Mídias Selecionadas
+    function handleMediaFilesSelected(event) {
+      const files = Array.from(event.target.files);
+      addMediaFiles(files);
+      event.target.value = ''; // reseta input para permitir re-seleção
+    }
+
+    function addMediaFiles(files) {
+      files.forEach(file => {
+        if (file.type.startsWith('image/') || file.type.startsWith('video/')) {
+          selectedMediaFiles.push(file);
+        } else {
+          alert(`Formato de arquivo não suportado: ${file.name}`);
+        }
+      });
+      renderMediaPreviews();
+    }
+
+    function removeMediaFile(index) {
+      selectedMediaFiles.splice(index, 1);
+      renderMediaPreviews();
+    }
+
+    function renderMediaPreviews() {
+      mediaPreviewGrid.innerHTML = '';
+      selectedMediaFiles.forEach((file, index) => {
+        const isImage = file.type.startsWith('image/');
+        const sizeFormatted = (file.size / (1024 * 1024)).toFixed(1) + ' MB';
+        
+        const card = document.createElement('div');
+        card.className = 'media-card';
+
+        let mediaHtml = '';
+        if (isImage) {
+          const imgUrl = URL.createObjectURL(file);
+          mediaHtml = `<img src="${imgUrl}" class="media-thumbnail" alt="${file.name}">`;
+        } else {
+          mediaHtml = `
+            <div class="media-video-placeholder">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+              <span>VÍDEO</span>
+            </div>`;
+        }
+
+        card.innerHTML = `
+          ${mediaHtml}
+          <button class="media-remove-btn" title="Remover anexo" onclick="removeMediaFile(${index})">✕</button>
+          <div class="media-card-info">
+            <span class="media-card-name" title="${file.name}">${file.name}</span>
+            <span class="media-card-size">${sizeFormatted}</span>
+          </div>
+        `;
+        mediaPreviewGrid.appendChild(card);
+      });
+    }
 
     // Ação: Iniciar Conexão
     function connectWhatsApp() {
@@ -520,10 +728,12 @@
     }
 
     // Ação: Iniciar Disparo
-    function startDispatch() {
+    async function startDispatch() {
       const msg = messageText.value.trim();
-      if (!msg) {
-        alert("Por favor, digite uma mensagem antes de iniciar o envio.");
+      const hasMedia = selectedMediaFiles.length > 0;
+
+      if (!msg && !hasMedia) {
+        alert("Por favor, digite uma mensagem ou anexe fotos/vídeos antes de iniciar o envio.");
         return;
       }
 
@@ -532,13 +742,48 @@
         return;
       }
 
-      if (confirm(`Confirma o disparo desta mensagem para ${totalContactsLoaded} contatos com intervalo de 12s por mensagem?`)) {
-        btnStart.disabled = true;
-        messageText.disabled = true;
-        progressArea.classList.add('active');
-        
-        socket.emit('start_dispatch', { message: msg });
+      const mediaDesc = hasMedia ? ` com ${selectedMediaFiles.length} anexo(s) de mídia` : '';
+      if (!confirm(`Confirma o disparo desta mensagem${mediaDesc} para ${totalContactsLoaded} contatos com intervalo de 12s por mensagem?`)) {
+        return;
       }
+
+      btnStart.disabled = true;
+      messageText.disabled = true;
+      progressArea.classList.add('active');
+
+      let uploadedMediaFiles = [];
+
+      if (hasMedia) {
+        statusLogBox.innerText = "Fazendo upload das mídias para o servidor...";
+        const formData = new FormData();
+        selectedMediaFiles.forEach(file => {
+          formData.append('mediaFiles', file);
+        });
+
+        try {
+          const res = await fetch('/api/upload', {
+            method: 'POST',
+            body: formData
+          });
+          const data = await res.json();
+          if (!data.success || !data.files) {
+            throw new Error(data.error || "Falha ao enviar mídias para o servidor.");
+          }
+          uploadedMediaFiles = data.files;
+          console.log("Upload concluído:", uploadedMediaFiles);
+        } catch (uploadErr) {
+          alert(`Erro ao preparar arquivos de mídia: ${uploadErr.message}`);
+          btnStart.disabled = false;
+          messageText.disabled = false;
+          progressArea.classList.remove('active');
+          return;
+        }
+      }
+
+      socket.emit('start_dispatch', { 
+        message: msg,
+        mediaFiles: uploadedMediaFiles
+      });
     }
 
     // Ação: Parar Disparo
@@ -618,6 +863,10 @@
       btnStop.innerText = "Interromper Envio";
       progressArea.classList.remove('active');
       progressBarFill.style.width = "0%";
+      
+      // Limpar mídias após conclusão
+      selectedMediaFiles = [];
+      renderMediaPreviews();
     });
 
     // Evento de Interrupção
