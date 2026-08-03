@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Painel de Envio Esporádico - WhatsApp</title>
+  
+  <!-- Fonte Google Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  
+  <!-- Socket.io Client -->
+  <script src="/socket.io/socket.io.js"></script>
+
+  <style>
+    :root {
+      --primary: #25D366;
+      --primary-dark: #1EBE5B;
+      --accent: #4F46E5;
+      --accent-hover: #4338CA;
+      --bg: #F8FAFC;
+      --card-bg: #FFFFFF;
+      --text-main: #1E293B;
+      --text-muted: #64748B;
+      --border: #E2E8F0;
+      --danger: #EF4444;
+      --warning: #F59E0B;
+      --success: #10B981;
+      --radius: 16px;
+      --shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.01);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 24px 16px;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 640px;
+      background: var(--card-bg);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      border: 1px solid var(--border);
+      overflow: hidden;
+    }
+
+    .header {
+      padding: 28px 32px 20px;
+      background: linear-gradient(135deg, #111827 0%, #1F2937 100%);
+      color: white;
+      position: relative;
+    }
+
+    .header h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+
+    .header p {
+      font-size: 0.875rem;
+      color: #9CA3AF;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-top: 12px;
+      background: rgba(255, 255, 255, 0.1);
+      color: #E5E7EB;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background-color: #9CA3AF;
+    }
+
+    .status-dot.connected { background-color: var(--primary); box-shadow: 0 0 8px var(--primary); }
+    .status-dot.waiting { background-color: var(--warning); animation: pulse 1.5s infinite; }
+    .status-dot.sending { background-color: var(--accent); animation: pulse 1s infinite; }
+
+    @keyframes pulse {
+      0% { opacity: 1; }
+      50% { opacity: 0.4; }
+      100% { opacity: 1; }
+    }
+
+    .content {
+      padding: 32px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    .card-section {
+      background: #FAFAFA;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .section-title {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--text-main);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .contact-count-pill {
+      background: #E0E7FF;
+      color: var(--accent);
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      width: 100%;
+      padding: 14px 20px;
+      border-radius: 10px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      border: none;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+
+    .btn-primary {
+      background-color: var(--primary);
+      color: #052E16;
+    }
+
+    .btn-primary:hover {
+      background-color: var(--primary-dark);
+      transform: translateY(-1px);
+    }
+
+    .btn-accent {
+      background-color: var(--accent);
+      color: white;
+    }
+
+    .btn-accent:hover {
+      background-color: var(--accent-hover);
+      transform: translateY(-1px);
+    }
+
+    .btn-danger {
+      background-color: #FEE2E2;
+      color: var(--danger);
+    }
+
+    .btn-danger:hover {
+      background-color: #FCA5A5;
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none !important;
+    }
+
+    /* QR Code Display Area */
+    .qr-container {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      background: white;
+      border-radius: 12px;
+      border: 2px dashed var(--border);
+      text-align: center;
+    }
+
+    .qr-container.active {
+      display: flex;
+    }
+
+    .qr-container img {
+      width: 220px;
+      height: 220px;
+      border-radius: 8px;
+      margin-bottom: 12px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+    }
+
+    .qr-container p {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    /* Form Fields */
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    label {
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text-main);
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 120px;
+      padding: 14px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background-color: white;
+      font-size: 0.95rem;
+      color: var(--text-main);
+      resize: vertical;
+      outline: none;
+      transition: border-color 0.2s ease;
+    }
+
+    textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+    }
+
+    /* Status Console Box */
+    .status-box {
+      background: #1E293B;
+      color: #E2E8F0;
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-family: monospace;
+      font-size: 0.825rem;
+      min-height: 42px;
+      display: flex;
+      align-items: center;
+    }
+
+    /* Progress Display Area */
+    .progress-section {
+      display: none;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .progress-section.active {
+      display: flex;
+    }
+
+    .progress-bar-bg {
+      width: 100%;
+      height: 10px;
+      background: #E2E8F0;
+      border-radius: 5px;
+      overflow: hidden;
+    }
+
+    .progress-bar-fill {
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent) 0%, var(--primary) 100%);
+      transition: width 0.4s ease;
+    }
+
+    .progress-info {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-main);
+    }
+
+    .anti-ban-note {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      background: #EFF6FF;
+      border-left: 3px solid var(--accent);
+      padding: 8px 12px;
+      border-radius: 4px;
+      line-height: 1.4;
+    }
+
+    /* Ocultar elementos */
+    .hidden {
+      display: none !important;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <!-- Header -->
+    <div class="header">
+      <h1>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+        Disparador Esporádico
+      </h1>
+      <p>Extração automática de contatos nativos da agenda e envio com segurança anti-banimento</p>
+
+      <div class="status-badge">
+        <span id="statusDot" class="status-dot"></span>
+        <span id="statusText">Desconectado</span>
+      </div>
+    </div>
+
+    <!-- Content -->
+    <div class="content">
+
+      <!-- Pass 1: Conexão WhatsApp -->
+      <div class="card-section">
+        <div class="section-title">
+          <span>1. Conexão do Celular</span>
+        </div>
+
+        <button id="btnConnect" class="btn btn-primary" onclick="connectWhatsApp()">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+          Conectar Celular
+        </button>
+
+        <!-- Area do QR Code -->
+        <div id="qrArea" class="qr-container">
+          <img id="qrImage" src="" alt="QR Code WhatsApp">
+          <p>Abra o WhatsApp no seu celular &gt; Menu &gt; Aparelhos conectados &gt; Conectar um aparelho</p>
+        </div>
+
+        <!-- Log / Mensagem de Status do Sistema -->
+        <div id="statusLogBox" class="status-box">
+          Aguardando ação... Clique em "Conectar Celular".
+        </div>
+      </div>
+
+      <!-- Pass 1.5: Gerenciamento de Contatos (Agenda / Manual / Arquivo) -->
+      <div class="card-section">
+        <div class="section-title">
+          <span>2. Gerenciar Contatos</span>
+          <span id="contactPill" class="contact-count-pill">0 contatos selecionados</span>
+        </div>
+
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <button type="button" id="tabAgendaBtn" class="btn" style="flex: 1; background: #E0E7FF; color: #3730A3; font-size: 0.85rem;" onclick="switchContactTab('manual')">
+            📝 Digitar / Importar
+          </button>
+          <button type="button" id="btnReloadAgenda" class="btn" style="flex: 1; background: #F3F4F6; color: #374151; font-size: 0.85rem;" onclick="reloadAgendaContacts()">
+            🔄 Puxar da Agenda
+          </button>
+        </div>
+
+        <!-- Área de Inserção Manual / Importação por Arquivo -->
+        <div id="manualContactsTab" style="display: flex; flex-direction: column; gap: 12px;">
+          <div class="form-group">
+            <label for="manualInput">Cole a Lista de Números ou Importe um Arquivo (.txt / .csv / .vcf):</label>
+            <textarea id="manualInput" placeholder="Exemplos:&#10;5511999998888&#10;5511988887777, Maria Silva&#10;11977776666; João Pedro&#10;Ou cole o conteúdo de um vCard (.vcf)" style="min-height: 90px; font-family: monospace; font-size: 0.85rem;"></textarea>
+          </div>
+
+          <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+            <input type="file" id="fileInput" accept=".txt,.csv,.vcf,.vcard" style="display: none;" onchange="handleFileUpload(event)">
+            <button type="button" class="btn" style="background: #EEF2FF; color: #4F46E5; border: 1px dashed #C7D2FE; font-size: 0.85rem; width: auto;" onclick="document.getElementById('fileInput').click()">
+              📁 Carregar TXT / CSV / VCF
+            </button>
+            <span id="fileNameSpan" style="font-size: 0.8rem; color: var(--text-muted);">Nenhum arquivo selecionado</span>
+          </div>
+
+          <div style="display: flex; gap: 10px; margin-top: 4px;">
+            <button type="button" class="btn btn-accent" style="flex: 1; font-size: 0.85rem;" onclick="applyCustomContacts('replace')">
+              ✅ Usar Esta Lista
+            </button>
+            <button type="button" class="btn" style="flex: 1; background: #F3F4F6; color: #374151; font-size: 0.85rem;" onclick="applyCustomContacts('append')">
+              ➕ Somar à Lista
+            </button>
+          </div>
+        </div>
+
+        <!-- Exibição de amostra de contatos -->
+        <div id="contactsPreview" style="font-size: 0.8rem; color: var(--text-muted); background: #F1F5F9; padding: 10px; border-radius: 8px; display: none;">
+          <strong>Amostra dos contatos prontos:</strong>
+          <ul id="contactsPreviewList" style="margin-left: 18px; margin-top: 4px;"></ul>
+        </div>
+      </div>
+
+      <!-- Pass 2: Mensagem e Disparo -->
+      <div id="dispatchSection" class="card-section">
+        <div class="section-title">
+          <span>3. Configurar Mensagem e Iniciar Disparo</span>
+        </div>
+
+        <div class="form-group">
+          <label for="messageText">Texto da Mensagem</label>
+          <textarea id="messageText" placeholder="Digite aqui a mensagem que deseja enviar para os seus contatos..."></textarea>
+        </div>
+
+        <div class="anti-ban-note">
+          🔒 <strong>Proteção Anti-Banimento Ativa:</strong> O sistema realiza o envio com um intervalo fixo e rigoroso de 12 segundos por mensagem.
+        </div>
+
+        <!-- Botão Iniciar Envio -->
+        <button id="btnStart" class="btn btn-accent" onclick="startDispatch()">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          Iniciar Envio
+        </button>
+
+        <!-- Seção de Progresso do Envio -->
+        <div id="progressArea" class="progress-section">
+          <div class="progress-info">
+            <span id="progressText">Enviando: 0 de 0...</span>
+            <span id="progressPercent">0%</span>
+          </div>
+          <div class="progress-bar-bg">
+            <div id="progressBarFill" class="progress-bar-fill"></div>
+          </div>
+          <button id="btnStop" class="btn btn-danger" style="margin-top: 8px;" onclick="stopDispatch()">
+            Interromper Envio
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    // Conexão Socket.io em tempo real
+    const socket = io();
+
+    // Elementos DOM
+    const btnConnect = document.getElementById('btnConnect');
+    const qrArea = document.getElementById('qrArea');
+    const qrImage = document.getElementById('qrImage');
+    const statusText = document.getElementById('statusText');
+    const statusDot = document.getElementById('statusDot');
+    const statusLogBox = document.getElementById('statusLogBox');
+    
+    const dispatchSection = document.getElementById('dispatchSection');
+    const contactPill = document.getElementById('contactPill');
+    const manualInput = document.getElementById('manualInput');
+    const fileNameSpan = document.getElementById('fileNameSpan');
+    const contactsPreview = document.getElementById('contactsPreview');
+    const contactsPreviewList = document.getElementById('contactsPreviewList');
+
+    const messageText = document.getElementById('messageText');
+    const btnStart = document.getElementById('btnStart');
+    const btnStop = document.getElementById('btnStop');
+    
+    const progressArea = document.getElementById('progressArea');
+    const progressText = document.getElementById('progressText');
+    const progressPercent = document.getElementById('progressPercent');
+    const progressBarFill = document.getElementById('progressBarFill');
+
+    let totalContactsLoaded = 0;
+
+    // Ação: Iniciar Conexão
+    function connectWhatsApp() {
+      btnConnect.disabled = true;
+      btnConnect.innerText = "Inicializando...";
+      statusLogBox.innerText = "Solicitando geração de QR Code ao servidor...";
+      socket.emit('start_session');
+    }
+
+    // Ação: Recarregar da Agenda
+    function reloadAgendaContacts() {
+      statusLogBox.innerText = "Buscando contatos da agenda do WhatsApp...";
+      socket.emit('reload_contacts');
+    }
+
+    // Ação: Leitura de Arquivo TXT/CSV
+    function handleFileUpload(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      fileNameSpan.innerText = file.name;
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        manualInput.value = e.target.result;
+      };
+      reader.readAsText(file);
+    }
+
+    // Ação: Aplicar Contatos Manuais/Importados
+    function applyCustomContacts(mode) {
+      const text = manualInput.value.trim();
+      if (!text) {
+        alert("Por favor, digite números ou importe um arquivo .txt/.csv primeiro.");
+        return;
+      }
+      socket.emit('set_custom_contacts', { contactsText: text, mode: mode });
+    }
+
+    // Ação: Iniciar Disparo
+    function startDispatch() {
+      const msg = messageText.value.trim();
+      if (!msg) {
+        alert("Por favor, digite uma mensagem antes de iniciar o envio.");
+        return;
+      }
+
+      if (totalContactsLoaded === 0) {
+        alert("Por favor, insira ou carregue pelo menos 1 contato antes de iniciar o disparo.");
+        return;
+      }
+
+      if (confirm(`Confirma o disparo desta mensagem para ${totalContactsLoaded} contatos com intervalo de 12s por mensagem?`)) {
+        btnStart.disabled = true;
+        messageText.disabled = true;
+        progressArea.classList.add('active');
+        
+        socket.emit('start_dispatch', { message: msg });
+      }
+    }
+
+    // Ação: Parar Disparo
+    function stopDispatch() {
+      if (confirm("Deseja realmente interromper o envio das próximas mensagens?")) {
+        btnStop.disabled = true;
+        btnStop.innerText = "Interrompendo...";
+        socket.emit('stop_dispatch');
+      }
+    }
+
+    // --- Listeners do Socket.io ---
+
+    // Atualização de Status
+    socket.on('status', (data) => {
+      statusLogBox.innerText = data.message;
+
+      if (data.code === 'QR_READY') {
+        statusDot.className = 'status-dot waiting';
+        statusText.innerText = 'Aguardando QR Code';
+      } else if (data.code === 'READY' || data.code === 'CONNECTED') {
+        statusDot.className = 'status-dot connected';
+        statusText.innerText = 'Conectado';
+        qrArea.classList.remove('active');
+        btnConnect.classList.add('hidden');
+      } else if (data.code === 'STARTING' || data.code === 'INITIALIZING') {
+        statusDot.className = 'status-dot waiting';
+        statusText.innerText = 'Inicializando...';
+      } else if (data.code === 'COMPLETED') {
+        statusDot.className = 'status-dot connected';
+        statusText.innerText = 'Concluido';
+      }
+    });
+
+    // Evento de Recebimento do QR Code
+    socket.on('qr', (data) => {
+      qrImage.src = data.qrCode;
+      qrArea.classList.add('active');
+      btnConnect.disabled = false;
+      btnConnect.innerText = "Reconectar Celular";
+    });
+
+    // Evento de Contatos Carregados (Exibição da Interface de Envio)
+    socket.on('contacts_loaded', (data) => {
+      totalContactsLoaded = data.count;
+      contactPill.innerText = `${data.count} contatos prontos`;
+
+      if (data.sample && data.sample.length > 0) {
+        contactsPreview.style.display = 'block';
+        contactsPreviewList.innerHTML = data.sample.map(c => `<li>${c.name} (${c.id.split('@')[0]})</li>`).join('');
+      } else {
+        contactsPreview.style.display = 'none';
+      }
+    });
+
+    // Evento de Atualização de Progresso (Requisito 3)
+    socket.on('dispatch_progress', (data) => {
+      statusDot.className = 'status-dot sending';
+      statusText.innerText = 'Enviando...';
+
+      // Atualiza o progresso exato enviado pelo backend (Exemplo: "Enviando: 14 de 542...")
+      progressText.innerText = data.progressText;
+      progressPercent.innerText = `${data.percentage}%`;
+      progressBarFill.style.width = `${data.percentage}%`;
+      statusLogBox.innerText = `Processando: ${data.contactName} (${data.current}/${data.total})`;
+    });
+
+    // Evento de Conclusão do Disparo
+    socket.on('dispatch_completed', (data) => {
+      alert(`🎉 Envio concluído com sucesso para ${data.total} contatos!`);
+      statusDot.className = 'status-dot connected';
+      statusText.innerText = 'Conectado';
+
+      btnStart.disabled = false;
+      messageText.disabled = false;
+      btnStop.disabled = false;
+      btnStop.innerText = "Interromper Envio";
+      progressArea.classList.remove('active');
+      progressBarFill.style.width = "0%";
+    });
+
+    // Evento de Interrupção
+    socket.on('dispatch_stopped', () => {
+      alert("Envio interrompido com sucesso pelo usuário.");
+      btnStart.disabled = false;
+      messageText.disabled = false;
+      btnStop.disabled = false;
+      btnStop.innerText = "Interromper Envio";
+      progressArea.classList.remove('active');
+    });
+
+    // Eventos de Erro
+    socket.on('dispatch_error', (data) => {
+      alert(`Atenção: ${data.message}`);
+      btnStart.disabled = false;
+      messageText.disabled = false;
+    });
+
+    socket.on('dispatch_log', (data) => {
+      console.warn(data.message);
+    });
+  </script>
+</body>
+</html>

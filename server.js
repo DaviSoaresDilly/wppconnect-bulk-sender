@@ -1,0 +1,444 @@
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+const path = require('path');
+const wppconnect = require('@wppconnect-team/wppconnect');
+
+// 1. Configuração do Servidor e Nuvem
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: '*',
+  }
+});
+
+// Servir arquivos estáticos do frontend
+app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.json());
+
+// Porta configurada dinamicamente para o ambiente de nuvem (Render, Heroku, Railway, etc.)
+const PORT = process.env.PORT || 3000;
+
+// Estado em memória
+let wppClient = null;
+let isInitializing = false;
+let validContacts = [];
+let isDispatching = false;
+let stopDispatchRequested = false;
+
+// 3. Função utilitária de Sleep / Delay baseada em Promise e setTimeout (Requisito Crítico Anti-Banimento)
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Inicialização da sessão do WhatsApp via WPPConnect
+ */
+async function initWppSession() {
+  if (wppClient) {
+    io.emit('status', { code: 'CONNECTED', message: 'Sessão já está ativa e conectada.' });
+    if (validContacts.length > 0) {
+      io.emit('contacts_loaded', { count: validContacts.length });
+    }
+    return;
+  }
+
+  if (isInitializing) {
+    io.emit('status', { code: 'INITIALIZING', message: 'A inicialização já está em andamento...' });
+    return;
+  }
+
+  isInitializing = true;
+  io.emit('status', { code: 'STARTING', message: 'Iniciando o navegador Puppeteer...' });
+
+  try {
+    const client = await wppconnect.create({
+      session: 'disparo-esporadico-session',
+      catchQR: (base64Qr, asciiQR, attempts, urlCode) => {
+        console.log(`[WPPConnect] QR Code gerado (Tentativa ${attempts})`);
+        io.emit('qr', { qrCode: base64Qr, attempts });
+        io.emit('status', { code: 'QR_READY', message: 'QR Code pronto! Escaneie pelo seu WhatsApp.' });
+      },
+      statusFind: (statusSession, session) => {
+        console.log(`[WPPConnect] Status da sessão: ${statusSession}`);
+        io.emit('status', { code: 'SESSION_STATUS', message: `Status da sessão: ${statusSession}` });
+      },
+      // Requisito 1: Puppeteer Options otimizados para contêineres de nuvem
+      puppeteerOptions: {
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-accelerated-2d-canvas',
+          '--no-first-run',
+          '--no-zygote',
+          '--disable-gpu'
+        ]
+      },
+      autoClose: false,
+      tokenStore: 'memory',
+    });
+
+    wppClient = client;
+    isInitializing = false;
+
+    io.emit('status', { code: 'AUTHENTICATED', message: 'Autenticado com sucesso! Extraindo contatos...' });
+    console.log('[WPPConnect] Cliente autenticado com sucesso.');
+
+    // Extração e Filtragem de Contatos
+    await extractAndFilterContacts();
+
+  } catch (error) {
+    isInitializing = false;
+    wppClient = null;
+    console.error('[WPPConnect] Erro ao iniciar a sessão:', error);
+    io.emit('status', { code: 'ERROR', message: `Falha na inicialização: ${error.message}` });
+  }
+}
+
+/**
+ * Extração de contatos da agenda do chip nativo do WhatsApp e filtragem de Grupos
+ */
+async function extractAndFilterContacts() {
+  if (!wppClient) return;
+
+  try {
+    io.emit('status', { code: 'LOADING_CONTACTS', message: 'Buscando contatos e chats ativos...' });
+
+    // Busca contatos e conversas da agenda
+    const [allChats, allContacts] = await Promise.all([
+      wppClient.getAllChats().catch(() => []),
+      wppClient.getAllContacts().catch(() => [])
+    ]);
+
+    const contactMap = new Map();
+
+    // Processa chats para encontrar conversas diretas
+    allChats.forEach(chat => {
+      // Requisito 2: Filtrar estritamente para remover qualquer grupo (isGroup: false)
+      const isGroup = chat.isGroup || chat.id?._serialized?.includes('@g.us');
+      if (!isGroup && chat.id?._serialized) {
+        const id = chat.id._serialized;
+        contactMap.set(id, {
+          id: id,
+          name: chat.name || chat.formattedTitle || chat.contact?.name || chat.contact?.pushname || id.split('@')[0],
+          isUser: true
+        });
+      }
+    });
+
+    // Processa lista de contatos para incluir contatos salvos da agenda
+    allContacts.forEach(contact => {
+      const isGroup = contact.isGroup || contact.id?._serialized?.includes('@g.us');
+      const isUser = contact.isUser || contact.id?._serialized?.includes('@c.us');
+      
+      if (!isGroup && isUser && contact.id?._serialized) {
+        const id = contact.id._serialized;
+        if (!contactMap.has(id)) {
+          contactMap.set(id, {
+            id: id,
+            name: contact.name || contact.pushname || contact.formattedName || id.split('@')[0],
+            isUser: true
+          });
+        }
+      }
+    });
+
+    validContacts = Array.from(contactMap.values());
+    console.log(`[WPPConnect] Total de contatos válidos (sem grupos): ${validContacts.length}`);
+
+    io.emit('status', { 
+      code: 'READY', 
+      message: `Conectado com sucesso! Total de ${validContacts.length} contatos carregados.` 
+    });
+
+    // Emite o número total de contatos válidos para o frontend
+    io.emit('contacts_loaded', { 
+      count: validContacts.length,
+      sample: validContacts.slice(0, 5) // Amostra apenas para demonstração visual
+    });
+
+  } catch (error) {
+    console.error('[WPPConnect] Erro ao extrair contatos:', error);
+    io.emit('status', { code: 'ERROR', message: `Erro ao extrair contatos: ${error.message}` });
+  }
+}
+
+/**
+ * Lógica de Disparo em Lote com Intervalo Fixo de Segurança (Anti-Banimento)
+ */
+async function startBulkDispatch(messageText) {
+  if (!wppClient) {
+    io.emit('dispatch_error', { message: 'WhatsApp não está conectado.' });
+    return;
+  }
+
+  if (!validContacts || validContacts.length === 0) {
+    io.emit('dispatch_error', { message: 'Nenhum contato disponível para disparo.' });
+    return;
+  }
+
+  if (isDispatching) {
+    io.emit('dispatch_error', { message: 'Um disparo já está em andamento.' });
+    return;
+  }
+
+  if (!messageText || messageText.trim() === '') {
+    io.emit('dispatch_error', { message: 'O texto da mensagem é obrigatório.' });
+    return;
+  }
+
+  isDispatching = true;
+  stopDispatchRequested = false;
+  const total = validContacts.length;
+
+  console.log(`[Disparo] Iniciando envio para ${total} contatos com intervalo fixo de 12s.`);
+  io.emit('dispatch_started', { total });
+
+  for (let i = 0; i < total; i++) {
+    if (stopDispatchRequested) {
+      console.log('[Disparo] Disparo interrompido pelo usuário.');
+      io.emit('status', { code: 'STOPPED', message: 'Envios interrompidos pelo usuário.' });
+      io.emit('dispatch_stopped', { current: i, total });
+      break;
+    }
+
+    const contact = validContacts[i];
+    const currentNumber = i + 1;
+    const progressText = `Enviando: ${currentNumber} de ${total}...`;
+
+    console.log(`[Disparo] (${currentNumber}/${total}) Enviando para ${contact.name} (${contact.id})...`);
+
+    // Atualiza o frontend com o progresso exato antes do envio
+    io.emit('dispatch_progress', {
+      current: currentNumber,
+      total: total,
+      progressText: progressText,
+      contactName: contact.name,
+      percentage: Math.round((currentNumber / total) * 100)
+    });
+
+    try {
+      // Envio da mensagem via WPPConnect
+      await wppClient.sendText(contact.id, messageText);
+      console.log(`[Disparo] (${currentNumber}/${total}) Enviado com sucesso.`);
+    } catch (err) {
+      console.error(`[Disparo] Erro ao enviar para ${contact.id}:`, err.message);
+      io.emit('dispatch_log', { 
+        type: 'error', 
+        message: `Falha no envio para ${contact.name} (${contact.id}): ${err.message}` 
+      });
+    }
+
+    // Requisito 3 (Crítico): Intervalo fixo e exato de 12 segundos entre o envio de cada mensagem
+    if (i < total - 1 && !stopDispatchRequested) {
+      console.log(`[Anti-Banimento] Aguardando exatamente 12 segundos antes do próximo envio...`);
+      await sleep(12000);
+    }
+  }
+
+  isDispatching = false;
+  if (!stopDispatchRequested) {
+    console.log('[Disparo] Envio concluído para todos os contatos!');
+    io.emit('dispatch_completed', { total });
+    io.emit('status', { code: 'COMPLETED', message: `Envio concluído! Total: ${total} contatos processados.` });
+  }
+  stopDispatchRequested = false;
+}
+
+
+/**
+ * Utilitário para interpretar e normalizar contatos a partir de texto (manual, CSV/TXT ou VCF/vCard)
+ */
+function parseRawContacts(text) {
+  if (!text || typeof text !== 'string') return [];
+  const map = new Map();
+
+  // Verificação de suporte a arquivos VCF (vCard)
+  if (text.includes('BEGIN:VCARD')) {
+    const vcards = text.split(/END:VCARD/i);
+    vcards.forEach((card) => {
+      let name = '';
+      const numbers = [];
+
+      const lines = card.split(/\r?\n/);
+      lines.forEach((line) => {
+        const trimmed = line.trim();
+        const upper = trimmed.toUpperCase();
+        if (upper.startsWith('FN:') || upper.startsWith('FN;')) {
+          name = trimmed.substring(trimmed.indexOf(':') + 1).trim();
+        } else if (!name && (upper.startsWith('N:') || upper.startsWith('N;'))) {
+          const rawN = trimmed.substring(trimmed.indexOf(':') + 1).trim();
+          name = rawN.split(';').filter(Boolean).reverse().join(' ').trim();
+        } else if (upper.startsWith('TEL') || upper.includes('TEL;')) {
+          const numPart = trimmed.substring(trimmed.indexOf(':') + 1).trim();
+          const digits = numPart.replace(/\D/g, '');
+          if (digits) numbers.push(digits);
+        }
+      });
+
+      numbers.forEach((rawNumber) => {
+        let finalNum = rawNumber;
+        if (finalNum.length === 10 || finalNum.length === 11) {
+          finalNum = '55' + finalNum;
+        }
+        if (finalNum.length >= 10) {
+          const id = `${finalNum}@c.us`;
+          if (!map.has(id)) {
+            map.set(id, {
+              id: id,
+              name: name || finalNum,
+              isUser: true
+            });
+          }
+        }
+      });
+    });
+
+    return Array.from(map.values());
+  }
+
+  // Caso padrão: Leitura de linhas TXT / CSV
+  const lines = text.split(/\r?\n/);
+  lines.forEach((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+
+    let name = '';
+    let rawNumber = '';
+
+    const parts = trimmed.split(/[,;\t]/).map(p => p.trim());
+    if (parts.length >= 2) {
+      const digits0 = parts[0].replace(/\D/g, '');
+      const digits1 = parts[1].replace(/\D/g, '');
+
+      if (digits0.length >= 10) {
+        rawNumber = digits0;
+        name = parts[1] || digits0;
+      } else if (digits1.length >= 10) {
+        rawNumber = digits1;
+        name = parts[0] || digits1;
+      } else {
+        rawNumber = parts[0].replace(/\D/g, '');
+        name = parts[1] || rawNumber;
+      }
+    } else {
+      const digits = trimmed.replace(/\D/g, '');
+      rawNumber = digits;
+      const nameCandidate = trimmed.replace(/[\d\+\-\(\)\s,;]/g, '').trim();
+      name = nameCandidate || digits;
+    }
+
+    if (rawNumber) {
+      if (rawNumber.length === 10 || rawNumber.length === 11) {
+        rawNumber = '55' + rawNumber;
+      }
+
+      if (rawNumber.length >= 10) {
+        const id = `${rawNumber}@c.us`;
+        map.set(id, {
+          id: id,
+          name: name || rawNumber,
+          isUser: true
+        });
+      }
+    }
+  });
+
+  return Array.from(map.values());
+}
+
+// 4. Comunicação Socket.io em Tempo Real
+io.on('connection', (socket) => {
+  console.log(`[Socket.io] Novo cliente conectado: ${socket.id}`);
+
+  // Envia estado atual ao reconectar
+  if (wppClient && validContacts.length > 0) {
+    socket.emit('status', { code: 'READY', message: `WhatsApp Conectado! Total de ${validContacts.length} contatos.` });
+    socket.emit('contacts_loaded', { count: validContacts.length, sample: validContacts.slice(0, 5) });
+  } else if (validContacts.length > 0) {
+    socket.emit('status', { code: 'READY', message: `${validContacts.length} contatos carregados manualmente.` });
+    socket.emit('contacts_loaded', { count: validContacts.length, sample: validContacts.slice(0, 5) });
+  } else if (isInitializing) {
+    socket.emit('status', { code: 'INITIALIZING', message: 'Aguardando inicialização do WhatsApp...' });
+  } else {
+    socket.emit('status', { code: 'DISCONNECTED', message: 'Desconectado. Conecte o celular ou importe contatos.' });
+  }
+
+  // Evento: Solicitação de Conexão
+  socket.on('start_session', () => {
+    initWppSession();
+  });
+
+  // Evento: Recarregar Contatos da Agenda
+  socket.on('reload_contacts', () => {
+    if (wppClient) {
+      extractAndFilterContacts();
+    } else {
+      socket.emit('status', { code: 'WARNING', message: 'WhatsApp não está conectado para puxar da agenda. Conecte primeiro.' });
+    }
+  });
+
+  // Evento: Definir/Adicionar Contatos Manuais ou Importados
+  socket.on('set_custom_contacts', (data) => {
+    const { contactsText, mode } = data || {};
+    const parsed = parseRawContacts(contactsText);
+
+    if (parsed.length === 0) {
+      socket.emit('dispatch_error', { message: 'Nenhum número válido foi encontrado no texto/arquivo fornecido.' });
+      return;
+    }
+
+    if (mode === 'append') {
+      const map = new Map();
+      validContacts.forEach(c => map.set(c.id, c));
+      parsed.forEach(c => map.set(c.id, c));
+      validContacts = Array.from(map.values());
+    } else {
+      validContacts = parsed;
+    }
+
+    console.log(`[Contatos] Lista de contatos atualizada: ${validContacts.length} contatos.`);
+    io.emit('contacts_loaded', { 
+      count: validContacts.length,
+      sample: validContacts.slice(0, 5)
+    });
+    io.emit('status', { 
+      code: 'READY', 
+      message: `Sucesso! Total de ${validContacts.length} contatos prontos para envio.` 
+    });
+  });
+
+  // Evento: Limpar Contatos
+  socket.on('clear_contacts', () => {
+    validContacts = [];
+    io.emit('contacts_loaded', { count: 0, sample: [] });
+    io.emit('status', { code: 'READY', message: 'Lista de contatos limpa.' });
+  });
+
+  // Evento: Solicitação de Disparo
+  socket.on('start_dispatch', (data) => {
+    const { message } = data || {};
+    startBulkDispatch(message);
+  });
+
+  // Evento: Cancelar Disparo
+  socket.on('stop_dispatch', () => {
+    if (isDispatching) {
+      stopDispatchRequested = true;
+      socket.emit('status', { code: 'STOPPING', message: 'Parando disparos após a mensagem atual...' });
+    }
+  });
+
+  socket.on('disconnect', () => {
+    console.log(`[Socket.io] Cliente desconectado: ${socket.id}`);
+  });
+});
+
+// Inicialização do Servidor Express
+server.listen(PORT, () => {
+  console.log(`===================================================`);
+  console.log(`🚀 Servidor rodando na porta: ${PORT}`);
+  console.log(`🌐 Acesse localmente: http://localhost:${PORT}`);
+  console.log(`===================================================`);
+});
