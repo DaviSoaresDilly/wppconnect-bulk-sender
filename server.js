@@ -209,10 +209,10 @@ async function extractAndFilterContacts() {
       message: `Conectado com sucesso! Total de ${validContacts.length} contatos carregados.` 
     });
 
-    // Emite o número total de contatos válidos para o frontend
+    // Emite o número total de contatos válidos e a lista completa para o frontend
     io.emit('contacts_loaded', { 
       count: validContacts.length,
-      sample: validContacts.slice(0, 5) // Amostra apenas para demonstração visual
+      contacts: validContacts
     });
 
   } catch (error) {
@@ -447,10 +447,10 @@ io.on('connection', (socket) => {
   // Envia estado atual ao reconectar
   if (wppClient && validContacts.length > 0) {
     socket.emit('status', { code: 'READY', message: `WhatsApp Conectado! Total de ${validContacts.length} contatos.` });
-    socket.emit('contacts_loaded', { count: validContacts.length, sample: validContacts.slice(0, 5) });
+    socket.emit('contacts_loaded', { count: validContacts.length, contacts: validContacts });
   } else if (validContacts.length > 0) {
     socket.emit('status', { code: 'READY', message: `${validContacts.length} contatos carregados manualmente.` });
-    socket.emit('contacts_loaded', { count: validContacts.length, sample: validContacts.slice(0, 5) });
+    socket.emit('contacts_loaded', { count: validContacts.length, contacts: validContacts });
   } else if (isInitializing) {
     socket.emit('status', { code: 'INITIALIZING', message: 'Aguardando inicialização do WhatsApp...' });
   } else {
@@ -493,7 +493,7 @@ io.on('connection', (socket) => {
     console.log(`[Contatos] Lista de contatos atualizada: ${validContacts.length} contatos.`);
     io.emit('contacts_loaded', { 
       count: validContacts.length,
-      sample: validContacts.slice(0, 5)
+      contacts: validContacts
     });
     io.emit('status', { 
       code: 'READY', 
@@ -504,8 +504,24 @@ io.on('connection', (socket) => {
   // Evento: Limpar Contatos
   socket.on('clear_contacts', () => {
     validContacts = [];
-    io.emit('contacts_loaded', { count: 0, sample: [] });
+    io.emit('contacts_loaded', { count: 0, contacts: [] });
     io.emit('status', { code: 'READY', message: 'Lista de contatos limpa.' });
+  });
+
+  // Evento: Remover Contato Único
+  socket.on('remove_contact', (data) => {
+    const { contactId } = data || {};
+    if (contactId) {
+      validContacts = validContacts.filter(c => c.id !== contactId);
+      io.emit('contacts_loaded', { 
+        count: validContacts.length,
+        contacts: validContacts
+      });
+      io.emit('status', { 
+        code: 'READY', 
+        message: `Contato removido. Total restante: ${validContacts.length} contatos.` 
+      });
+    }
   });
 
   // Evento: Solicitação de Disparo

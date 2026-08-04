@@ -422,6 +422,138 @@
     .media-remove-btn:hover {
       background: var(--danger);
     }
+
+    /* Seção de Cards de Contatos Importados */
+    .contacts-display-section {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      background: #F8FAFC;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      margin-top: 4px;
+    }
+
+    .contacts-header-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .contacts-search-input {
+      flex: 1;
+      min-width: 180px;
+      padding: 8px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 0.85rem;
+      outline: none;
+      background: white;
+      transition: border-color 0.2s ease;
+    }
+
+    .contacts-search-input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+    }
+
+    .contacts-cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+      gap: 10px;
+      max-height: 360px;
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+
+    .contacts-cards-grid::-webkit-scrollbar {
+      width: 6px;
+    }
+    .contacts-cards-grid::-webkit-scrollbar-thumb {
+      background: #CBD5E1;
+      border-radius: 3px;
+    }
+
+    .contact-card {
+      background: white;
+      border: 1px solid #E2E8F0;
+      border-radius: 10px;
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      position: relative;
+      transition: all 0.2s ease;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+    }
+
+    .contact-card:hover {
+      border-color: var(--accent);
+      box-shadow: 0 4px 12px rgba(79, 70, 229, 0.08);
+      transform: translateY(-1px);
+    }
+
+    .contact-avatar {
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #4F46E5 0%, #25D366 100%);
+      color: white;
+      font-size: 0.85rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .contact-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      overflow: hidden;
+      flex: 1;
+    }
+
+    .contact-name {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-main);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .contact-phone {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      font-family: monospace;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .contact-card-remove {
+      background: transparent;
+      border: none;
+      color: #94A3B8;
+      cursor: pointer;
+      padding: 4px 6px;
+      border-radius: 4px;
+      font-size: 13px;
+      line-height: 1;
+      transition: all 0.2s ease;
+    }
+
+    .contact-card-remove:hover {
+      color: var(--danger);
+      background: #FEE2E2;
+    }
   </style>
 </head>
 <body>
@@ -508,10 +640,23 @@
           </div>
         </div>
 
-        <!-- Exibição de amostra de contatos -->
-        <div id="contactsPreview" style="font-size: 0.8rem; color: var(--text-muted); background: #F1F5F9; padding: 10px; border-radius: 8px; display: none;">
-          <strong>Amostra dos contatos prontos:</strong>
-          <ul id="contactsPreviewList" style="margin-left: 18px; margin-top: 4px;"></ul>
+        <!-- Exibição de Cards dos Contatos Importados -->
+        <div id="contactsDisplaySection" class="contacts-display-section" style="display: none;">
+          <div class="contacts-header-bar">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-weight: 600; font-size: 0.875rem; color: var(--text-main);">📋 Contatos Carregados</span>
+              <span id="contactsCounterBadge" class="contact-count-pill" style="font-size: 0.75rem;">0</span>
+            </div>
+            
+            <div style="display: flex; gap: 8px; align-items: center; flex: 1; justify-content: flex-end;">
+              <input type="text" id="contactSearchInput" class="contacts-search-input" placeholder="🔍 Filtrar nome ou número..." oninput="filterContactCards()">
+              <button type="button" class="btn" style="background: #FEE2E2; color: var(--danger); font-size: 0.75rem; width: auto; padding: 7px 12px;" onclick="clearAllContacts()">
+                🗑️ Limpar Todos
+              </button>
+            </div>
+          </div>
+
+          <div id="contactsCardsGrid" class="contacts-cards-grid"></div>
         </div>
       </div>
 
@@ -590,8 +735,13 @@
     const contactPill = document.getElementById('contactPill');
     const manualInput = document.getElementById('manualInput');
     const fileNameSpan = document.getElementById('fileNameSpan');
-    const contactsPreview = document.getElementById('contactsPreview');
-    const contactsPreviewList = document.getElementById('contactsPreviewList');
+
+    const contactsDisplaySection = document.getElementById('contactsDisplaySection');
+    const contactsCounterBadge = document.getElementById('contactsCounterBadge');
+    const contactSearchInput = document.getElementById('contactSearchInput');
+    const contactsCardsGrid = document.getElementById('contactsCardsGrid');
+
+    let allLoadedContacts = [];
 
     const messageText = document.getElementById('messageText');
     const btnStart = document.getElementById('btnStart');
@@ -826,18 +976,109 @@
       btnConnect.innerText = "Reconectar Celular";
     });
 
-    // Evento de Contatos Carregados (Exibição da Interface de Envio)
+    // Evento de Contatos Carregados (Exibição em Cards)
     socket.on('contacts_loaded', (data) => {
       totalContactsLoaded = data.count;
+      allLoadedContacts = data.contacts || [];
       contactPill.innerText = `${data.count} contatos prontos`;
 
-      if (data.sample && data.sample.length > 0) {
-        contactsPreview.style.display = 'block';
-        contactsPreviewList.innerHTML = data.sample.map(c => `<li>${c.name} (${c.id.split('@')[0]})</li>`).join('');
+      if (allLoadedContacts.length > 0) {
+        contactsDisplaySection.style.display = 'flex';
+        renderContactCards(allLoadedContacts);
       } else {
-        contactsPreview.style.display = 'none';
+        contactsDisplaySection.style.display = 'none';
+        contactsCardsGrid.innerHTML = '';
       }
     });
+
+    // Formatação amigável de número de telefone (ex: +55 (11) 99999-8888)
+    function formatPhoneNumber(idStr) {
+      if (!idStr) return '';
+      const raw = idStr.split('@')[0].replace(/\D/g, '');
+      if (raw.startsWith('55') && (raw.length === 12 || raw.length === 13)) {
+        const ddd = raw.substring(2, 4);
+        const rest = raw.substring(4);
+        if (rest.length === 9) {
+          return `+55 (${ddd}) ${rest.substring(0, 5)}-${rest.substring(5)}`;
+        } else if (rest.length === 8) {
+          return `+55 (${ddd}) ${rest.substring(0, 4)}-${rest.substring(4)}`;
+        }
+      }
+      return `+${raw}`;
+    }
+
+    // Extrair iniciais do nome para o Avatar do Card
+    function getInitials(name) {
+      if (!name) return '📱';
+      const parts = name.trim().split(/\s+/);
+      if (parts.length >= 2) {
+        return (parts[0][0] + parts[1][0]).toUpperCase();
+      }
+      return parts[0].substring(0, 2).toUpperCase();
+    }
+
+    // Renderização dos Cards de Contato
+    function renderContactCards(contacts) {
+      contactsCounterBadge.innerText = `${contacts.length} contatos`;
+      contactsCardsGrid.innerHTML = '';
+
+      if (contacts.length === 0) {
+        contactsCardsGrid.innerHTML = `
+          <div style="grid-column: 1 / -1; text-align: center; color: var(--text-muted); padding: 24px; font-size: 0.85rem;">
+            Nenhum contato encontrado.
+          </div>`;
+        return;
+      }
+
+      contacts.forEach(c => {
+        const phoneFormatted = formatPhoneNumber(c.id);
+        const initials = getInitials(c.name);
+        
+        const card = document.createElement('div');
+        card.className = 'contact-card';
+        card.innerHTML = `
+          <div class="contact-avatar">${initials}</div>
+          <div class="contact-info">
+            <span class="contact-name" title="${c.name}">${c.name}</span>
+            <span class="contact-phone">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+              ${phoneFormatted}
+            </span>
+          </div>
+          <button class="contact-card-remove" title="Remover este contato" onclick="removeSingleContact('${c.id}')">✕</button>
+        `;
+        contactsCardsGrid.appendChild(card);
+      });
+    }
+
+    // Filtrar cards de contatos por nome ou número
+    function filterContactCards() {
+      const query = contactSearchInput.value.toLowerCase().trim();
+      if (!query) {
+        renderContactCards(allLoadedContacts);
+        return;
+      }
+
+      const filtered = allLoadedContacts.filter(c => {
+        const nameMatch = (c.name || '').toLowerCase().includes(query);
+        const phoneMatch = (c.id || '').includes(query);
+        return nameMatch || phoneMatch;
+      });
+
+      renderContactCards(filtered);
+    }
+
+    // Remover um contato individual
+    function removeSingleContact(contactId) {
+      socket.emit('remove_contact', { contactId: contactId });
+    }
+
+    // Limpar toda a lista de contatos
+    function clearAllContacts() {
+      if (confirm("Deseja realmente apagar todos os contatos da lista?")) {
+        socket.emit('clear_contacts');
+      }
+    }
 
     // Evento de Atualização de Progresso (Requisito 3)
     socket.on('dispatch_progress', (data) => {
