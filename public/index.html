@@ -689,6 +689,7 @@
             <div>
               <strong style="font-size: 0.875rem; color: var(--text-main);">Clique ou arraste Fotos e Vídeos aqui</strong>
               <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px;">Fotos (.jpg, .png, .webp) ou Vídeos (.mp4, .mov, .avi)</p>
+              <p id="mediaLimitHint" style="font-size: 0.7rem; color: var(--text-muted); margin-top: 2px;"></p>
             </div>
           </div>
           <input type="file" id="mediaFileInput" accept="image/*,video/*" multiple style="display: none;" onchange="handleMediaFilesSelected(event)">
@@ -765,6 +766,23 @@
     let totalContactsLoaded = 0;
     let selectedMediaFiles = [];
 
+    // Sobrescrito pelo evento 'config' assim que o socket conecta; o servidor é
+    // a fonte da verdade destes limites.
+    let mediaLimits = {
+      maxMediaMB: 16,
+      maxTotalMediaMB: 32,
+      maxMediaFiles: 5,
+      dispatchIntervalSeconds: 12
+    };
+
+    function renderMediaLimitHint() {
+      const hint = document.getElementById('mediaLimitHint');
+      if (hint) {
+        hint.innerText = `Até ${mediaLimits.maxMediaFiles} arquivos · ${mediaLimits.maxMediaMB}MB cada · ${mediaLimits.maxTotalMediaMB}MB no total`;
+      }
+    }
+    renderMediaLimitHint();
+
     // Suporte Drag & Drop no Media Dropzone
     if (mediaDropzone) {
       ['dragenter', 'dragover'].forEach(eventName => {
@@ -798,13 +816,35 @@
     }
 
     function addMediaFiles(files) {
+      const rejected = [];
+
       files.forEach(file => {
-        if (file.type.startsWith('image/') || file.type.startsWith('video/')) {
-          selectedMediaFiles.push(file);
-        } else {
-          alert(`Formato de arquivo não suportado: ${file.name}`);
+        if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) {
+          rejected.push(`${file.name}: formato não suportado`);
+          return;
         }
+        if (selectedMediaFiles.length >= mediaLimits.maxMediaFiles) {
+          rejected.push(`${file.name}: máximo de ${mediaLimits.maxMediaFiles} arquivos`);
+          return;
+        }
+        // Validado aqui também para não gastar upload num arquivo que o
+        // servidor vai recusar de qualquer jeito.
+        const sizeMB = file.size / (1024 * 1024);
+        if (sizeMB > mediaLimits.maxMediaMB) {
+          rejected.push(`${file.name}: ${sizeMB.toFixed(1)}MB (limite ${mediaLimits.maxMediaMB}MB)`);
+          return;
+        }
+        const totalMB = selectedMediaFiles.reduce((s, f) => s + f.size, file.size) / (1024 * 1024);
+        if (totalMB > mediaLimits.maxTotalMediaMB) {
+          rejected.push(`${file.name}: soma passaria de ${mediaLimits.maxTotalMediaMB}MB`);
+          return;
+        }
+        selectedMediaFiles.push(file);
       });
+
+      if (rejected.length > 0) {
+        alert(`Arquivo(s) recusado(s):\n\n${rejected.join('\n')}`);
+      }
       renderMediaPreviews();
     }
 
@@ -910,7 +950,7 @@
       }
 
       const mediaDesc = hasMedia ? ` com ${selectedMediaFiles.length} anexo(s) de mídia` : '';
-      if (!confirm(`Confirma o disparo desta mensagem${mediaDesc} para ${totalContactsLoaded} contatos com intervalo de 12s por mensagem?`)) {
+      if (!confirm(`Confirma o disparo desta mensagem${mediaDesc} para ${totalContactsLoaded} contatos com intervalo de ${mediaLimits.dispatchIntervalSeconds}s por mensagem?`)) {
         return;
       }
 
@@ -963,6 +1003,17 @@
     }
 
     // --- Listeners do Socket.io ---
+
+    // Limites de mídia definidos pelo servidor
+    socket.on('config', (data) => {
+      mediaLimits = Object.assign(mediaLimits, data || {});
+      renderMediaLimitHint();
+    });
+
+    // Aviso de pressão de memória no container
+    socket.on('memory_warning', (mem) => {
+      console.warn(`[RAM] ${mem.usedMB}MB / ${mem.limitMB}MB (${mem.pct}%)`);
+    });
 
     // Atualização de Status
     socket.on('status', (data) => {
