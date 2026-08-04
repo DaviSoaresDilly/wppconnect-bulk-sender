@@ -231,11 +231,8 @@ async function initWppSession(forceFresh = false) {
       }
     }
 
-    io.emit('status', { code: 'CONNECTED', message: 'Autenticado com sucesso! Extraindo contatos da agenda...' });
-    console.log('[WPPConnect] Cliente autenticado com sucesso.');
-
-    // Extração e Filtragem de Contatos
-    await extractAndFilterContacts();
+    io.emit('status', { code: 'CONNECTED', message: 'WhatsApp Conectado com Sucesso! Cole os números ou carregue um arquivo (TXT/CSV/VCF) na Etapa 2.' });
+    console.log('[WPPConnect] Cliente autenticado com sucesso. Extração automática de agenda desativada para economia máxima de RAM no Render.');
 
   } catch (error) {
     isInitializing = false;
@@ -254,9 +251,9 @@ async function extractAndFilterContacts() {
   try {
     io.emit('status', { code: 'LOADING_CONTACTS', message: 'Buscando contatos e chats ativos...' });
 
-    // Busca contatos e conversas da agenda
+    // Busca contatos e conversas da agenda usando listChats para poupar memória
     const [allChats, allContacts] = await Promise.all([
-      wppClient.getAllChats().catch(() => []),
+      wppClient.listChats({ onlyUsers: true }).catch(() => wppClient.getAllChats().catch(() => [])),
       wppClient.getAllContacts().catch(() => [])
     ]);
 
