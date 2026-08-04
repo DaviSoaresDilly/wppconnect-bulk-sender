@@ -211,6 +211,25 @@ async function initWppSession(forceFresh = false) {
     wppClient = client;
     isInitializing = false;
 
+    // Ativa Bloqueio de Imagens/Estilos/Fontes em segundo plano na página do Chromium para economizar 250MB+ de RAM
+    if (client && client.page) {
+      try {
+        await client.page.setRequestInterception(true);
+        client.page.on('request', (req) => {
+          const resourceType = req.resourceType();
+          // Bloqueia estilos CSS, fontes e mídias visuais pesadas do WhatsApp Web que consomem RAM à toa
+          if (['stylesheet', 'font', 'media'].includes(resourceType)) {
+            req.abort().catch(() => {});
+          } else {
+            req.continue().catch(() => {});
+          }
+        });
+        console.log('[RAM Optimization] Interceptador ativado. Folhas de estilo e fontes bloqueadas no Chromium.');
+      } catch (err) {
+        console.warn('[RAM Optimization] Aviso ao ativar interceptação:', err.message);
+      }
+    }
+
     io.emit('status', { code: 'CONNECTED', message: 'Autenticado com sucesso! Extraindo contatos da agenda...' });
     console.log('[WPPConnect] Cliente autenticado com sucesso.');
 
@@ -378,6 +397,13 @@ async function startBulkDispatch(messageText, mediaFiles = []) {
         type: 'error', 
         message: `Falha no envio para ${contact.name} (${contact.id}): ${err.message}` 
       });
+    }
+
+    // Força liberação imediata de memória RAM após cada envio (Crítico para Render Free 512MB)
+    if (global.gc) {
+      try {
+        global.gc();
+      } catch (e) {}
     }
 
     // Requisito 3 (Crítico): Intervalo fixo e exato de 12 segundos entre o envio de cada mensagem

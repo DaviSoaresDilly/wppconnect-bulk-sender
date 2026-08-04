@@ -4,8 +4,8 @@
   "description": "Plataforma web minimalista para envio de mensagens esporádicas via WhatsApp Web usando WPPConnect",
   "main": "server.js",
   "scripts": {
-    "start": "node --expose-gc --max-old-space-size=384 server.js",
-    "dev": "node --expose-gc --max-old-space-size=384 server.js"
+    "start": "node --expose-gc --max-old-space-size=256 server.js",
+    "dev": "node --expose-gc --max-old-space-size=256 server.js"
   },
   "keywords": [
     "whatsapp",
