@@ -582,15 +582,21 @@
           <span>1. Conexão do Celular</span>
         </div>
 
-        <button id="btnConnect" class="btn btn-primary" onclick="connectWhatsApp()">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
-          Conectar Celular
-        </button>
+        <div style="display: flex; gap: 8px;">
+          <button id="btnConnect" class="btn btn-primary" style="flex: 2;" onclick="connectWhatsApp()">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+            Conectar Celular
+          </button>
+          <button id="btnResetSession" class="btn" style="flex: 1; background: #F3F4F6; color: #374151; font-size: 0.85rem;" onclick="resetWhatsAppSession()" title="Apaga sessão antiga e gera novo QR Code">
+            🔄 Resetar QR Code
+          </button>
+        </div>
 
         <!-- Area do QR Code -->
         <div id="qrArea" class="qr-container">
           <img id="qrImage" src="" alt="QR Code WhatsApp">
-          <p>Abra o WhatsApp no seu celular &gt; Menu &gt; Aparelhos conectados &gt; Conectar um aparelho</p>
+          <p style="font-weight: 500; color: var(--text-main); margin-bottom: 4px;">Abra o WhatsApp no seu celular:</p>
+          <p style="font-size: 0.8rem; color: var(--text-muted);">Menu (⋮ ou Configurações) &gt; Aparelhos Conectados &gt; Conectar um Aparelho</p>
         </div>
 
         <!-- Log / Mensagem de Status do Sistema -->
@@ -848,6 +854,17 @@
       socket.emit('start_session');
     }
 
+    // Ação: Resetar Sessão e Forçar Novo QR Code
+    function resetWhatsAppSession() {
+      if (confirm("Deseja desconectar e gerar um novo QR Code do zero?")) {
+        btnConnect.disabled = true;
+        btnConnect.innerText = "Gerando QR Code...";
+        qrArea.classList.remove('active');
+        statusLogBox.innerText = "Limpando sessão antiga e gerando novo QR Code...";
+        socket.emit('reset_session');
+      }
+    }
+
     // Ação: Recarregar da Agenda
     function reloadAgendaContacts() {
       statusLogBox.innerText = "Buscando contatos da agenda do WhatsApp...";
@@ -954,6 +971,8 @@
       if (data.code === 'QR_READY') {
         statusDot.className = 'status-dot waiting';
         statusText.innerText = 'Aguardando QR Code';
+        btnConnect.disabled = false;
+        btnConnect.innerText = "Reconectar";
       } else if (data.code === 'READY' || data.code === 'CONNECTED') {
         statusDot.className = 'status-dot connected';
         statusText.innerText = 'Conectado';
@@ -962,15 +981,26 @@
       } else if (data.code === 'STARTING' || data.code === 'INITIALIZING') {
         statusDot.className = 'status-dot waiting';
         statusText.innerText = 'Inicializando...';
+      } else if (data.code === 'DISCONNECTED' || data.code === 'ERROR') {
+        statusDot.className = 'status-dot';
+        statusText.innerText = 'Desconectado';
+        qrArea.classList.remove('active');
+        btnConnect.disabled = false;
+        btnConnect.classList.remove('hidden');
+        btnConnect.innerText = "Conectar Celular";
       } else if (data.code === 'COMPLETED') {
         statusDot.className = 'status-dot connected';
-        statusText.innerText = 'Concluido';
+        statusText.innerText = 'Concluído';
       }
     });
 
     // Evento de Recebimento do QR Code
     socket.on('qr', (data) => {
-      qrImage.src = data.qrCode;
+      let qr = data.qrCode;
+      if (qr && !qr.startsWith('data:') && !qr.startsWith('http')) {
+        qr = 'data:image/png;base64,' + qr;
+      }
+      qrImage.src = qr;
       qrArea.classList.add('active');
       btnConnect.disabled = false;
       btnConnect.innerText = "Reconectar Celular";

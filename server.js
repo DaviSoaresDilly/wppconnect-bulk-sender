@@ -90,11 +90,11 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 /**
  * Inicialização da sessão do WhatsApp via WPPConnect
  */
-async function initWppSession() {
+async function initWppSession(forceFresh = false) {
   if (wppClient) {
     io.emit('status', { code: 'CONNECTED', message: 'Sessão já está ativa e conectada.' });
     if (validContacts.length > 0) {
-      io.emit('contacts_loaded', { count: validContacts.length });
+      io.emit('contacts_loaded', { count: validContacts.length, contacts: validContacts });
     }
     return;
   }
@@ -102,6 +102,17 @@ async function initWppSession() {
   if (isInitializing) {
     io.emit('status', { code: 'INITIALIZING', message: 'A inicialização já está em andamento...' });
     return;
+  }
+
+  // Se forceFresh for true, apaga a pasta de tokens anterior para forçar um QR Code novo
+  const sessionPath = path.join(__dirname, 'tokens', 'disparo-esporadico-session');
+  if (forceFresh && fs.existsSync(sessionPath)) {
+    try {
+      fs.rmSync(sessionPath, { recursive: true, force: true });
+      console.log('[WPPConnect] Pasta de sessão anterior removida.');
+    } catch (e) {
+      console.warn('[WPPConnect] Aviso ao limpar sessão:', e.message);
+    }
   }
 
   isInitializing = true;
@@ -112,15 +123,32 @@ async function initWppSession() {
       session: 'disparo-esporadico-session',
       catchQR: (base64Qr, asciiQR, attempts, urlCode) => {
         console.log(`[WPPConnect] QR Code gerado (Tentativa ${attempts})`);
-        io.emit('qr', { qrCode: base64Qr, attempts });
-        io.emit('status', { code: 'QR_READY', message: 'QR Code pronto! Escaneie pelo seu WhatsApp.' });
+        
+        let formattedQr = base64Qr;
+        if (base64Qr && !base64Qr.startsWith('data:') && !base64Qr.startsWith('http')) {
+          formattedQr = `data:image/png;base64,${base64Qr}`;
+        }
+
+        io.emit('qr', { qrCode: formattedQr, attempts });
+        io.emit('status', { code: 'QR_READY', message: 'QR Code pronto! Abra o WhatsApp no celular e escaneie.' });
       },
       statusFind: (statusSession, session) => {
         console.log(`[WPPConnect] Status da sessão: ${statusSession}`);
-        io.emit('status', { code: 'SESSION_STATUS', message: `Status da sessão: ${statusSession}` });
+        
+        if (statusSession === 'isLogged' || statusSession === 'inChat' || statusSession === 'qrReadSuccess') {
+          io.emit('status', { code: 'CONNECTED', message: 'WhatsApp Conectado com Sucesso!' });
+        } else if (statusSession === 'notLogged') {
+          io.emit('status', { code: 'QR_READY', message: 'Aguardando leitura do QR Code pelo seu celular...' });
+        } else if (statusSession === 'desconnectedMobile' || statusSession === 'browserClosed' || statusSession === 'autocloseCalled') {
+          wppClient = null;
+          isInitializing = false;
+          io.emit('status', { code: 'DISCONNECTED', message: 'Sessão desconectada. Clique em "Conectar Celular".' });
+        } else {
+          io.emit('status', { code: 'SESSION_STATUS', message: `Status: ${statusSession}` });
+        }
       },
-      // Requisito 1: Puppeteer Options otimizados para contêineres de nuvem
       puppeteerOptions: {
+        headless: true,
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
         args: [
           '--no-sandbox',
@@ -139,7 +167,7 @@ async function initWppSession() {
     wppClient = client;
     isInitializing = false;
 
-    io.emit('status', { code: 'AUTHENTICATED', message: 'Autenticado com sucesso! Extraindo contatos...' });
+    io.emit('status', { code: 'CONNECTED', message: 'Autenticado com sucesso! Extraindo contatos da agenda...' });
     console.log('[WPPConnect] Cliente autenticado com sucesso.');
 
     // Extração e Filtragem de Contatos
@@ -459,7 +487,31 @@ io.on('connection', (socket) => {
 
   // Evento: Solicitação de Conexão
   socket.on('start_session', () => {
-    initWppSession();
+    initWppSession(false);
+  });
+
+  // Evento: Resetar Sessão e Forçar Gerar Novo QR Code
+  socket.on('reset_session', async () => {
+    try {
+      if (wppClient) {
+        await wppClient.logout().catch(() => {});
+        await wppClient.close().catch(() => {});
+        wppClient = null;
+      }
+      isInitializing = false;
+      
+      const tokenDir = path.join(__dirname, 'tokens', 'disparo-esporadico-session');
+      if (fs.existsSync(tokenDir)) {
+        fs.rmSync(tokenDir, { recursive: true, force: true });
+      }
+      
+      console.log('[WPPConnect] Sessão resetada pelo usuário. Gerando novo QR Code...');
+      io.emit('status', { code: 'STARTING', message: 'Sessão resetada! Gerando novo QR Code...' });
+      initWppSession(true);
+    } catch (err) {
+      console.error('[WPPConnect] Erro ao resetar sessão:', err);
+      io.emit('status', { code: 'ERROR', message: `Erro ao resetar: ${err.message}` });
+    }
   });
 
   // Evento: Recarregar Contatos da Agenda
