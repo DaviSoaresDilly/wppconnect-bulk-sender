@@ -170,6 +170,7 @@ async function initWppSession(forceFresh = false) {
       folderNameToken: 'tokens',
       puppeteerOptions: {
         headless: true,
+        timeout: 90000, // 90 segundos de limite para o Chromium subir a conexão WebSocket sem dar Timeout de 30s
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
         args: [
           '--no-sandbox',
