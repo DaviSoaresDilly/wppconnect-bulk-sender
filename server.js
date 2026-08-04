@@ -84,6 +84,22 @@ let validContacts = [];
 let isDispatching = false;
 let stopDispatchRequested = false;
 
+// Monitoramento periódico de RAM e Coleta de Lixo (Garbage Collection) para o plano 512MB do Render
+setInterval(() => {
+  const memory = process.memoryUsage();
+  const heapUsedMB = Math.round(memory.heapUsed / 1024 / 1024);
+  const rssMB = Math.round(memory.rss / 1024 / 1024);
+
+  if (rssMB > 350) {
+    console.warn(`[RAM Render] Uso de memória: RSS ${rssMB}MB | Heap ${heapUsedMB}MB. Forçando liberação de RAM...`);
+    if (global.gc) {
+      try {
+        global.gc();
+      } catch (e) {}
+    }
+  }
+}, 25000);
+
 // 3. Função utilitária de Sleep / Delay baseada em Promise e setTimeout (Requisito Crítico Anti-Banimento)
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -147,21 +163,49 @@ async function initWppSession(forceFresh = false) {
           io.emit('status', { code: 'SESSION_STATUS', message: `Status: ${statusSession}` });
         }
       },
+      // Otimizações de Velocidade e Conexão Rápida
+      updatesLog: false, // Desativa busca externa por atualizações no startup (economiza 3-8s!)
+      autoClose: false,
+      tokenStore: 'file', // Mantém os tokens em arquivo para não perder o login no restart do container
+      folderNameToken: 'tokens',
       puppeteerOptions: {
         headless: true,
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
+          '--disable-dev-shm-usage', // Usa /tmp em vez de /dev/shm
           '--disable-accelerated-2d-canvas',
           '--no-first-run',
-          '--no-zygote',
-          '--disable-gpu'
+          '--disable-gpu',
+          '--disable-extensions',
+          '--disable-component-extensions-with-background-pages',
+          '--disable-default-apps',
+          '--mute-audio',
+          '--no-default-browser-check',
+          '--disable-background-networking',
+          '--disable-background-timer-throttling',
+          '--disable-backgrounding-occluded-windows',
+          '--disable-breakpad',
+          '--disable-client-side-phishing-detection',
+          '--disable-component-update',
+          '--disable-domain-reliability',
+          '--disable-hang-monitor',
+          '--disable-ipc-flooding-protection',
+          '--disable-notifications',
+          '--disable-popup-blocking',
+          '--disable-print-preview',
+          '--disable-prompt-on-repost',
+          '--disable-renderer-backgrounding',
+          '--disable-speech-api',
+          '--disable-sync',
+          '--hide-scrollbars',
+          '--ignore-certificate-errors',
+          '--metrics-recording-only',
+          '--no-pings',
+          '--password-store=basic'
         ]
-      },
-      autoClose: false,
-      tokenStore: 'memory',
+      }
     });
 
     wppClient = client;
