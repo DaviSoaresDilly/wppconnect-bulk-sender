@@ -1,0 +1,37 @@
+# Blueprint do Render.
+#
+# Importante: o plano é "standard" (2GB) de propósito. Nos planos free/starter
+# (512MB) o Chromium + WhatsApp Web estoura a memória durante o login e o
+# container é morto pelo OOM killer antes mesmo do QR Code ser lido.
+#
+# Para rodar em 512MB, a alternativa é hospedar o Chromium fora do Render e
+# definir BROWSER_WS (ver README).
+
+services:
+  - type: web
+    name: wppconnect-bulk-sender
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: standard # 2GB RAM. free/starter (512MB) não comporta o Chromium.
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PUPPETEER_EXECUTABLE_PATH
+        value: /usr/bin/chromium
+      # Teto do heap V8 do renderer. Dentro do container o Chromium dimensiona
+      # o heap pela RAM do host, ignorando o limite do cgroup.
+      - key: CHROMIUM_JS_HEAP_MB
+        value: "256"
+      - key: MAX_MEDIA_MB
+        value: "16"
+      - key: MAX_TOTAL_MEDIA_MB
+        value: "32"
+      - key: DISPATCH_INTERVAL_MS
+        value: "12000"
+    # Sem disco persistente, tokens/ é apagado a cada deploy e o QR Code passa a
+    # ser exigido toda vez que o serviço sobe.
+    disk:
+      name: wpp-session
+      mountPath: /usr/src/app/tokens
+      sizeGB: 1
